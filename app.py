@@ -36,12 +36,34 @@ if "cards" not in st.session_state:
     st.session_state.cards = []  # list of {"front": ..., "back": ..., "selected": True}
 if "key_gen" not in st.session_state:
     st.session_state.key_gen = 0  # bump to force fresh widget keys
+if "last_notes" not in st.session_state:
+    st.session_state.last_notes = ""
+if "last_model" not in st.session_state:
+    st.session_state.last_model = ""
 
 # ---------------------------------------------------------------------------
 # Helper – call Claude to generate flashcards
 # ---------------------------------------------------------------------------
 with open(os.path.join(os.path.dirname(__file__), "prompts", "system_prompt.txt")) as _f:
     SYSTEM_PROMPT = _f.read().strip()
+
+
+def build_log(notes: str, model: str, cards: list[dict]) -> str:
+    import datetime
+    lines = [
+        f"# Anki Flashcard Generator — Dev Log",
+        f"Generated: {datetime.datetime.now().isoformat()}",
+        f"Model: {model}",
+        f"Cards generated: {len(cards)}",
+        "",
+        "## Input Notes",
+        notes.strip(),
+        "",
+        "## Generated Flashcards",
+    ]
+    for i, c in enumerate(cards, 1):
+        lines += [f"\n### Card {i}", f"**Front:** {c['front']}", f"**Back:** {c['back']}"]
+    return "\n".join(lines)
 
 
 def generate_cards(notes: str, api_key: str, model: str) -> list[dict]:
@@ -120,6 +142,8 @@ if generate_btn:
             try:
                 new_cards = generate_cards(notes, api_key, model)
                 st.session_state.cards = new_cards
+                st.session_state.last_notes = notes
+                st.session_state.last_model = model
                 st.success(f"Generated {len(new_cards)} flashcards!")
             except Exception as e:
                 st.error(f"Error generating cards: {e}")
@@ -210,3 +234,13 @@ if cards:
                 mime="text/plain",
             )
             st.caption("Import in Anki: File > Import, select the .txt file, set separator to Tab.")
+
+    st.divider()
+    with st.expander("Dev Tools"):
+        log_content = build_log(st.session_state.last_notes, st.session_state.last_model, cards)
+        st.download_button(
+            "Export Dev Log",
+            data=log_content,
+            file_name="dev_log.md",
+            mime="text/markdown",
+        )
