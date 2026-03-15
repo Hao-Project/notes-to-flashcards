@@ -9,7 +9,7 @@ import streamlit as st
 # ---------------------------------------------------------------------------
 # Page config
 # ---------------------------------------------------------------------------
-st.set_page_config(page_title="Anki Flashcard Generator", page_icon="🗂️", layout="wide")
+st.set_page_config(page_title="notes-to-flashcards", page_icon="🗂️", layout="wide")
 
 # ---------------------------------------------------------------------------
 # Sidebar – settings
@@ -122,7 +122,7 @@ def push_to_anki(cards: list[dict], deck: str) -> tuple[int, list[str]]:
 # ---------------------------------------------------------------------------
 # Main UI
 # ---------------------------------------------------------------------------
-st.title("Anki Flashcard Generator")
+st.title("notes-to-flashcards")
 
 notes = st.text_area("Paste your notes here", height=300, placeholder="Paste your reading notes, highlights, or study material...")
 
