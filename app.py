@@ -40,12 +40,8 @@ if "key_gen" not in st.session_state:
 # ---------------------------------------------------------------------------
 # Helper – call Claude to generate flashcards
 # ---------------------------------------------------------------------------
-SYSTEM_PROMPT = """\
-You are a flashcard generator. Given the user's notes, produce a JSON array of \
-flashcard objects. Each object has two keys: "front" (the question) and "back" \
-(the answer). Create cards that test understanding of key concepts, arguments, \
-and insights from the notes. Make the questions specific and the answers concise \
-but complete. Output ONLY the JSON array, nothing else."""
+with open(os.path.join(os.path.dirname(__file__), "prompts", "system_prompt.txt")) as _f:
+    SYSTEM_PROMPT = _f.read().strip()
 
 
 def generate_cards(notes: str, api_key: str, model: str) -> list[dict]:
