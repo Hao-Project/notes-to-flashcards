@@ -1,6 +1,8 @@
-# Notes to Anki
+# notes-to-flashcards
 
 A Streamlit app that turns your reading notes into Anki flashcards using Claude.
+
+**Live demo:** https://notes-to-cards.streamlit.app/
 
 ## What it does
 
