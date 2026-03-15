@@ -1,0 +1,216 @@
+import json
+import os
+import re
+
+import anthropic
+import requests
+import streamlit as st
+
+# ---------------------------------------------------------------------------
+# Page config
+# ---------------------------------------------------------------------------
+st.set_page_config(page_title="Anki Flashcard Generator", page_icon="🗂️", layout="wide")
+
+# ---------------------------------------------------------------------------
+# Sidebar – settings
+# ---------------------------------------------------------------------------
+with st.sidebar:
+    st.header("Settings")
+    api_key = st.text_input(
+        "Anthropic API Key",
+        type="password",
+        value=os.environ.get("ANTHROPIC_API_KEY", ""),
+        help="Needed for AI card generation. Also reads from ANTHROPIC_API_KEY env var.",
+    )
+    model = st.selectbox("Model", ["claude-sonnet-4-20250514", "claude-haiku-4-5-20251001"], index=0)
+
+    st.divider()
+    st.subheader("AnkiConnect")
+    anki_url = st.text_input("AnkiConnect URL", value="http://127.0.0.1:8765")
+    deck_name = st.text_input("Deck name", value="Default")
+
+# ---------------------------------------------------------------------------
+# Session state defaults
+# ---------------------------------------------------------------------------
+if "cards" not in st.session_state:
+    st.session_state.cards = []  # list of {"front": ..., "back": ..., "selected": True}
+if "key_gen" not in st.session_state:
+    st.session_state.key_gen = 0  # bump to force fresh widget keys
+
+# ---------------------------------------------------------------------------
+# Helper – call Claude to generate flashcards
+# ---------------------------------------------------------------------------
+SYSTEM_PROMPT = """\
+You are a flashcard generator. Given the user's notes, produce a JSON array of \
+flashcard objects. Each object has two keys: "front" (the question) and "back" \
+(the answer). Create cards that test understanding of key concepts, arguments, \
+and insights from the notes. Make the questions specific and the answers concise \
+but complete. Output ONLY the JSON array, nothing else."""
+
+
+def generate_cards(notes: str, api_key: str, model: str) -> list[dict]:
+    client = anthropic.Anthropic(api_key=api_key)
+    message = client.messages.create(
+        model=model,
+        max_tokens=4096,
+        system=SYSTEM_PROMPT,
+        messages=[{"role": "user", "content": notes}],
+    )
+    text = message.content[0].text.strip()
+    # Extract JSON array even if wrapped in markdown code fences
+    match = re.search(r"\[.*\]", text, re.DOTALL)
+    if match:
+        text = match.group(0)
+    cards = json.loads(text)
+    return [{"front": c["front"], "back": c["back"], "selected": True} for c in cards]
+
+
+# ---------------------------------------------------------------------------
+# Helper – AnkiConnect
+# ---------------------------------------------------------------------------
+def anki_connect(action: str, params: dict | None = None) -> dict:
+    payload = {"action": action, "version": 6}
+    if params:
+        payload["params"] = params
+    resp = requests.post(anki_url, json=payload, timeout=10)
+    resp.raise_for_status()
+    return resp.json()
+
+
+def push_to_anki(cards: list[dict], deck: str) -> tuple[int, list[str]]:
+    """Push cards via AnkiConnect. Returns (success_count, errors)."""
+    notes = []
+    for c in cards:
+        notes.append(
+            {
+                "deckName": deck,
+                "modelName": "Basic",
+                "fields": {"Front": c["front"], "Back": c["back"]},
+                "options": {"allowDuplicate": False},
+            }
+        )
+    result = anki_connect("addNotes", {"notes": notes})
+    ids = result.get("result", [])
+    errors = []
+    success = 0
+    for i, nid in enumerate(ids):
+        if nid is None:
+            errors.append(f"Card {i+1}: failed (possibly duplicate)")
+        else:
+            success += 1
+    return success, errors
+
+
+# ---------------------------------------------------------------------------
+# Main UI
+# ---------------------------------------------------------------------------
+st.title("Anki Flashcard Generator")
+
+notes = st.text_area("Paste your notes here", height=300, placeholder="Paste your reading notes, highlights, or study material...")
+
+col_gen, col_clear = st.columns([1, 1])
+with col_gen:
+    generate_btn = st.button("Generate Flashcards", type="primary", disabled=not notes.strip())
+with col_clear:
+    if st.button("Clear Cards"):
+        st.session_state.cards = []
+        st.rerun()
+
+if generate_btn:
+    if not api_key:
+        st.error("Please provide an Anthropic API key in the sidebar.")
+    else:
+        with st.spinner("Generating flashcards with Claude..."):
+            try:
+                new_cards = generate_cards(notes, api_key, model)
+                st.session_state.cards = new_cards
+                st.success(f"Generated {len(new_cards)} flashcards!")
+            except Exception as e:
+                st.error(f"Error generating cards: {e}")
+
+# ---------------------------------------------------------------------------
+# Card review
+# ---------------------------------------------------------------------------
+cards = st.session_state.cards
+
+if cards:
+    st.divider()
+    st.subheader(f"Review Flashcards ({len(cards)} total)")
+
+    # Select / deselect all
+    col_sa, col_da = st.columns([1, 1])
+    with col_sa:
+        if st.button("Select All"):
+            for c in cards:
+                c["selected"] = True
+            st.session_state.key_gen += 1
+            st.rerun()
+    with col_da:
+        if st.button("Deselect All"):
+            for c in cards:
+                c["selected"] = False
+            st.session_state.key_gen += 1
+            st.rerun()
+
+    selected_count = sum(1 for c in cards if c["selected"])
+    st.caption(f"{selected_count} of {len(cards)} selected")
+
+    # Render each card
+    g = st.session_state.key_gen
+    for i, card in enumerate(cards):
+        with st.container(border=True):
+            cols = st.columns([0.05, 0.95])
+            with cols[0]:
+                card["selected"] = st.checkbox("select", value=card["selected"], key=f"sel_{g}_{i}", label_visibility="collapsed")
+            with cols[1]:
+                new_front = st.text_area("Front", value=card["front"], key=f"front_{g}_{i}", height=68)
+                new_back = st.text_area("Back", value=card["back"], key=f"back_{g}_{i}", height=68)
+                if new_front != card["front"]:
+                    card["front"] = new_front
+                if new_back != card["back"]:
+                    card["back"] = new_back
+
+    # ---------------------------------------------------------------------------
+    # Export / Import
+    # ---------------------------------------------------------------------------
+    st.divider()
+    st.subheader("Export")
+
+    selected = [c for c in cards if c["selected"]]
+
+    if not selected:
+        st.warning("No cards selected.")
+    else:
+        col_anki, col_file = st.columns(2)
+
+        with col_anki:
+            st.markdown("**Import to Anki via AnkiConnect**")
+            st.caption(f"Deck: {deck_name} | {anki_url}")
+            if st.button("Push to Anki", type="primary"):
+                try:
+                    ok, errs = push_to_anki(selected, deck_name)
+                    if ok:
+                        st.success(f"Added {ok} cards to '{deck_name}'!")
+                    if errs:
+                        for e in errs:
+                            st.warning(e)
+                except requests.ConnectionError:
+                    st.error("Cannot connect to AnkiConnect. Make sure Anki is open with the AnkiConnect add-on installed.")
+                except Exception as e:
+                    st.error(f"AnkiConnect error: {e}")
+
+        with col_file:
+            st.markdown("**Download as file**")
+            tsv_lines = []
+            for c in selected:
+                front = c["front"].replace("\t", " ").replace("\n", "<br>")
+                back = c["back"].replace("\t", " ").replace("\n", "<br>")
+                tsv_lines.append(f"{front}\t{back}")
+            tsv_content = "\n".join(tsv_lines)
+            st.download_button(
+                "Download .txt (tab-separated)",
+                data=tsv_content,
+                file_name="anki_cards.txt",
+                mime="text/plain",
+            )
+            st.caption("Import in Anki: File > Import, select the .txt file, set separator to Tab.")
